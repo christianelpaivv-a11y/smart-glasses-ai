@@ -203,12 +203,20 @@ function connectWebSocket() {
     catch { log('Bad JSON from server'); return; }
     if (data.session_id) { sessionId = data.session_id; log('Session: ' + sessionId); return; }
     if (data.info) { setStatus('ℹ️ ' + data.info); log('Server info: ' + data.info); return; }
-    if (data.step_start) {
-      audioQueue.push({ type: 'streaming', meta: data.step_start, chunks: [], completed: false, played: false });
-      log(`Step ${data.step_start.step}/${data.step_start.total_steps}: ${data.step_start.text.slice(0,40)}`);
-      stepText.textContent = data.step_start.text;
-      stepLabel.textContent = `Step ${data.step_start.step} of ${data.step_start.total_steps}`;
-      setStatus('🔊 Buffering…');
+         if (data.step && data.audio_base64 !== undefined) {
+      audioQueue.push({
+        type: 'streaming',
+        meta: {
+          type: data.type || '',
+          step: data.step,
+          total_steps: data.total_steps,
+          text: data.text,
+          audio_base64: data.audio_base64
+        },
+        chunks: [],
+        completed: true,
+        played: false
+      });
       if (!isPlaying) playNextStreaming();
       return;
     }
@@ -390,30 +398,15 @@ function playNextStreaming() {
   stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
   setStatus('🔊 Speaking…');
 
-  // ── Firefox iOS: speechSynthesis broken, use AudioContext chunks ──
-  if (IS_FIREFOX_IOS) {
-    log('Firefox iOS path — waiting for audio chunks…');
-    waitAndPlayChunks(step);
+  // If full audio is already present (non-streaming server), play it immediately
+  if (step.meta.audio_base64) {
+    decodeAndPlay(step.meta.audio_base64).then(() => playNextStreaming());
     return;
   }
 
-  // ── Safari iOS and other mobile: speechSynthesis ──
-  if (IS_MOBILE && 'speechSynthesis' in window) {
-    log('Mobile TTS path');
-    // Cancel any leftover utterance
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(step.meta.text);
-    utterance.lang   = 'en-US';
-    utterance.rate   = 1.0;
-    utterance.volume = 1.0;
-    utterance.onend  = () => { log('✅ TTS finished'); playNextStreaming(); };
-    utterance.onerror = (e) => {
-      log('❌ TTS error: ' + e.error + ' — falling back to chunks');
-      waitAndPlayChunks(step);
-    };
-    window.speechSynthesis.speak(utterance);
-    return;
-  }
+  // Otherwise wait for chunks and play via AudioContext
+  waitAndPlayChunks(step);
+}
 
   // ── Desktop: original MediaSource streaming ──
   pendingChunks = [];
