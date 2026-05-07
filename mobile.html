@@ -413,74 +413,77 @@ async function decodeAndPlay(base64) {
 
 function playNextStreaming() {
   const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
-  if (!step) { isPlaying = false; currentlyPlaying = null; setStatus('✅ Done', 'ok'); return; }
+  if (!step) {
+    isPlaying = false;
+    currentlyPlaying = null;
+    setStatus('✅ Done', 'ok');
+    return;
+  }
 
-  // ── MOBILE: use browser's built-in speech engine (no server audio needed) ──
-const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-if (isMobile) {
   isPlaying = true;
   currentlyPlaying = step;
   step.played = true;
 
-  // Show the text and speak with the browser
-  stepText.textContent = step.meta.text;
-  stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
-  setStatus('🔊 Speaking…');
-
-  if ('speechSynthesis' in window) {
-    const utterance = new SpeechSynthesisUtterance(step.meta.text);
-    utterance.lang = 'en-US';
-    utterance.rate = 1.0;
-    utterance.onend = () => {
-      log('✅ Browser TTS finished');
-      playNextStreaming();
-    };
-    utterance.onerror = () => {
-      log('❌ Browser TTS error');
-      playNextStreaming();
-    };
-    window.speechSynthesis.speak(utterance);
-  } else {
-    log('❌ speechSynthesis not available');
-    playNextStreaming();
-  }
-  return;
-}
-
-    // Update UI
+  // ── MOBILE: use browser's built-in speech engine ──
+  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  if (isMobile) {
     stepText.textContent = step.meta.text;
     stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
     setStatus('🔊 Speaking…');
 
-    // Convert to a blob URL and play immediately
-    const binary = atob(fullBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-
-    const audio = new Audio(url);
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      log('✅ Mobile playback finished');
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(step.meta.text);
+      utterance.lang = 'en-US';
+      utterance.rate = 1.0;
+      utterance.onend = () => {
+        log('✅ Browser TTS finished');
+        playNextStreaming();
+      };
+      utterance.onerror = () => {
+        log('❌ Browser TTS error');
+        playNextStreaming();
+      };
+      window.speechSynthesis.speak(utterance);
+    } else {
+      log('❌ speechSynthesis not available');
       playNextStreaming();
-    };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      log('❌ Mobile audio error, trying AudioContext fallback');
-      decodeAndPlay(fullBase64).then(() => playNextStreaming());
-    };
-
-    // The hold‑to‑talk button already called ensureAudioContext(),
-    // so plain HTMLAudioElement.play() almost always works on iOS.
-    audio.play().catch(() => {
-      // If blocked, immediate AudioContext fallback
-      URL.revokeObjectURL(url);
-      decodeAndPlay(fullBase64).then(() => playNextStreaming());
-    });
+    }
+    return;
   }
-  tryPlay();
-  return;
+
+  // ── DESKTOP: keep the original MediaSource streaming ─────────────────────
+  pendingChunks = [];
+  if (mediaSource) { URL.revokeObjectURL(window._currentAudio?.src); }
+  mediaSource = new MediaSource();
+  const audio = new Audio();
+  audio.src = URL.createObjectURL(mediaSource);
+  window._currentAudio = audio;
+
+  mediaSource.addEventListener('sourceopen', () => {
+    try {
+      sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      sourceBuffer.mode = 'sequence';
+      feedChunksToSourceBuffer(step);
+    } catch(e) {
+      log('MediaSource error: ' + e.message);
+      fallbackPlay(step);
+    }
+  });
+
+  audio.onended = () => {
+    URL.revokeObjectURL(audio.src);
+    mediaSource = null;
+    sourceBuffer = null;
+    currentlyPlaying = null;
+    playNextStreaming();
+  };
+  audio.onerror = () => audio.onended();
+  audio.play().catch(e => log('Audio play error: ' + e.message));
+
+  if (step.completed) {
+    feedChunksToSourceBuffer(step);
+    if (mediaSource.readyState === 'open') mediaSource.endOfStream();
+  }
 }
 
   // ── DESKTOP: keep the original MediaSource streaming ─────────────────────
