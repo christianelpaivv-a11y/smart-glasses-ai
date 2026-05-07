@@ -414,15 +414,53 @@ async function decodeAndPlay(base64) {
 function playNextStreaming() {
   const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
   if (!step) { isPlaying = false; currentlyPlaying = null; setStatus('✅ Done', 'ok'); return; }
+
+  // ── ON MOBILE: skip MediaSource, assemble full audio, play via AudioContext ──
+  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  if (isMobile) {
+    isPlaying = true;
+    currentlyPlaying = step;
+    step.played = true;
+
+    // We'll wait for the step to complete (all chunks received), then play
+    function tryPlay() {
+      if (!step.completed) {
+        // Not all chunks yet – check again in 100ms
+        setTimeout(tryPlay, 100);
+        return;
+      }
+      const fullBase64 = step.chunks.join('');
+      if (fullBase64) {
+        // Update UI
+        stepText.textContent = step.meta.text;
+        stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
+        setStatus('🔊 Speaking…');
+        // Use the reliable AudioContext playback
+        decodeAndPlay(fullBase64).then(() => {
+          // Move to next step after playback ends
+          playNextStreaming();
+        });
+      } else {
+        // No audio, go next
+        playNextStreaming();
+      }
+    }
+    tryPlay();
+    return;
+  }
+
+  // ── DESKTOP: keep the original MediaSource streaming ─────────────────────
   isPlaying = true;
   currentlyPlaying = step;
   step.played = true;
   pendingChunks = [];
+
   if (mediaSource) { URL.revokeObjectURL(window._currentAudio?.src); }
   mediaSource = new MediaSource();
   const audio = new Audio();
   audio.src = URL.createObjectURL(mediaSource);
   window._currentAudio = audio;
+
   mediaSource.addEventListener('sourceopen', () => {
     try {
       sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
@@ -430,9 +468,11 @@ function playNextStreaming() {
       feedChunksToSourceBuffer(step);
     } catch(e) { log('MediaSource error: ' + e.message); fallbackPlay(step); }
   });
+
   audio.onended = () => { URL.revokeObjectURL(audio.src); mediaSource = null; sourceBuffer = null; currentlyPlaying = null; playNextStreaming(); };
   audio.onerror = () => audio.onended();
   audio.play().catch(e => log('Audio play error: ' + e.message));
+
   if (step.completed) {
     feedChunksToSourceBuffer(step);
     if (mediaSource.readyState === 'open') mediaSource.endOfStream();
