@@ -1,8 +1,7 @@
+import os
 import google.generativeai as genai
 
-import os
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY", "your-fallback-key"))
-
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
 def get_ai_response(category: str, text: str, history: list = None, document_text: str = "") -> str:
     # Build conversation context
     context = ""
