@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.json">
   <title>Smart Glasses</title>
-  
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -101,6 +100,7 @@
 </div>
 
 <script>
+const IS_MOBILE = (('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth <= 768);
 const WS_URL = `wss://smart-glasses-i1t6.onrender.com/ws`;
 const RECONNECT_BASE_MS = 1500;
 const RECONNECT_MAX_MS = 30000;
@@ -218,43 +218,12 @@ function connectWebSocket() {
       }
       return;
     }
-        if (data.step_end) {
+    if (data.step_end) {
       let current = null;
       for (let i = audioQueue.length - 1; i >= 0; i--) {
-        if (audioQueue[i].type === 'streaming' && !audioQueue[i].completed) {
-          current = audioQueue[i];
-          current.completed = true;
-          break;
-        }
+        if (audioQueue[i].type === 'streaming' && !audioQueue[i].completed) { current = audioQueue[i]; current.completed = true; break; }
       }
-      if (!current) return;
-
-      // For mobile / fallback: assemble the full audio and play via decodeAndPlay
-      const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-      if (isMobile || !mediaSource || mediaSource.readyState !== 'open') {
-        // Build full base64 from all chunks
-        const fullBase64 = current.chunks.join('');
-        if (fullBase64) {
-          // Stop any current MediaSource audio
-          if (window._currentAudio) {
-            window._currentAudio.pause();
-            URL.revokeObjectURL(window._currentAudio.src);
-            window._currentAudio = null;
-          }
-          // Use the already‑working decodeAndPlay function
-          decodeAndPlay(fullBase64).then(() => {
-            // Move to next step after playback ends
-            playNextStreaming();
-          });
-        } else {
-          playNextStreaming();
-        }
-        // Prevent the MediaSource path from running
-        return;
-      }
-
-      // Desktop: keep the existing streaming behaviour (MediaSource)
-      if (current === currentlyPlaying && mediaSource.readyState === 'open') {
+      if (current && current === currentlyPlaying && mediaSource && mediaSource.readyState === 'open') {
         mediaSource.endOfStream();
       }
       return;
@@ -301,32 +270,20 @@ function clearDocument() {
 function runOCR(imageDataUrl) {
   log('Running OCR on image…');
   setStatus('🔍 Scanning document…');
-  loadTesseract().then(() => {
-    Tesseract.recognize(imageDataUrl, 'eng', {
-      logger: m => { if (m.status === 'recognizing text') setStatus(`🔍 OCR ${Math.round(m.progress*100)}%`); }
-    }).then(({ data: { text } }) => {
-      if (text.trim()) {
-        documentText = text.trim();
-        document.getElementById('docText').innerText = documentText;
-        document.getElementById('docPreview').style.display = 'block';
-        log('OCR result: ' + documentText.slice(0, 100) + '…');
-        setStatus('📄 Scanned – answering now…');
-        ensureAudioContext();
-        sendQuestion(text.trim());
-      } else {
-        log('No text found in image');
-        setStatus('⚠️ No text detected');
-      }
-      stopCamera();
-    }).catch(err => {
-      log('OCR error: ' + err.message);
-      setStatus('⚠️ OCR failed');
-      stopCamera();
-    });
-  }).catch(err => {
-    log(err.message);
-    setStatus('⚠️ Could not load OCR engine');
-  });
+  Tesseract.recognize(imageDataUrl, 'eng', {
+    logger: m => { if (m.status === 'recognizing text') setStatus(`🔍 OCR ${Math.round(m.progress*100)}%`); }
+  }).then(({ data: { text } }) => {
+    if (text.trim()) {
+      documentText = text.trim();
+      document.getElementById('docText').innerText = documentText;
+      document.getElementById('docPreview').style.display = 'block';
+      log('OCR result: ' + documentText.slice(0, 100) + '…');
+      setStatus('📄 Scanned – answering now…');
+      ensureAudioContext();
+      sendQuestion(text.trim());
+    } else { log('No text found in image'); setStatus('⚠️ No text detected'); }
+    stopCamera();
+  }).catch(err => { log('OCR error: ' + err.message); setStatus('⚠️ OCR failed'); stopCamera(); });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -411,6 +368,16 @@ async function decodeAndPlay(base64) {
   });
 }
 
+// ── Mobile speech synthesis unlock ──────────────────────────
+let speechUnlocked = false;
+function unlockSpeechSynthesis() {
+  if (speechUnlocked || !('speechSynthesis' in window)) return;
+  speechUnlocked = true;
+  const u = new SpeechSynthesisUtterance('');
+  u.volume = 0;
+  window.speechSynthesis.speak(u);
+}
+
 function playNextStreaming() {
   const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
   if (!step) {
@@ -424,9 +391,8 @@ function playNextStreaming() {
   currentlyPlaying = step;
   step.played = true;
 
-  // ── MOBILE: use browser's built-in speech engine ──
-  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  if (isMobile) {
+  // ── MOBILE: use browser speech engine ──
+  if (IS_MOBILE) {
     stepText.textContent = step.meta.text;
     stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
     setStatus('🔊 Speaking…');
@@ -451,7 +417,7 @@ function playNextStreaming() {
     return;
   }
 
-  // ── DESKTOP: keep the original MediaSource streaming ─────────────────────
+  // ── DESKTOP: MediaSource streaming ─────────────────────────
   pendingChunks = [];
   if (mediaSource) { URL.revokeObjectURL(window._currentAudio?.src); }
   mediaSource = new MediaSource();
@@ -477,36 +443,6 @@ function playNextStreaming() {
     currentlyPlaying = null;
     playNextStreaming();
   };
-  audio.onerror = () => audio.onended();
-  audio.play().catch(e => log('Audio play error: ' + e.message));
-
-  if (step.completed) {
-    feedChunksToSourceBuffer(step);
-    if (mediaSource.readyState === 'open') mediaSource.endOfStream();
-  }
-}
-
-  // ── DESKTOP: keep the original MediaSource streaming ─────────────────────
-  isPlaying = true;
-  currentlyPlaying = step;
-  step.played = true;
-  pendingChunks = [];
-
-  if (mediaSource) { URL.revokeObjectURL(window._currentAudio?.src); }
-  mediaSource = new MediaSource();
-  const audio = new Audio();
-  audio.src = URL.createObjectURL(mediaSource);
-  window._currentAudio = audio;
-
-  mediaSource.addEventListener('sourceopen', () => {
-    try {
-      sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
-      sourceBuffer.mode = 'sequence';
-      feedChunksToSourceBuffer(step);
-    } catch(e) { log('MediaSource error: ' + e.message); fallbackPlay(step); }
-  });
-
-  audio.onended = () => { URL.revokeObjectURL(audio.src); mediaSource = null; sourceBuffer = null; currentlyPlaying = null; playNextStreaming(); };
   audio.onerror = () => audio.onended();
   audio.play().catch(e => log('Audio play error: ' + e.message));
 
@@ -622,6 +558,8 @@ function safeStopRecognition() {
 function onButtonDown(ev) {
   ev.preventDefault();
   ensureAudioContext();
+  unlockSpeechSynthesis(); // ← unlock speech synthesis once during gesture
+
   if (inputMode === 'pending') {
     if (!hasSpeechAPI()) { switchToTextMode('SpeechRecognition API not available'); setTimeout(() => textInput.focus(), 100); return; }
     switchToMicMode(); safeStartRecognition(); return;
@@ -659,6 +597,15 @@ function initPendingUI() {
   initPendingUI();
   connectWebSocket();
   if (!hasSpeechAPI()) { switchToTextMode('SpeechRecognition API not in this browser'); setStatus('⌨️ Text mode (no Speech API)', 'error'); }
+
+  // Keep speech synthesis alive on iOS
+  if (IS_MOBILE && 'speechSynthesis' in window) {
+    setInterval(() => {
+      if (window.speechSynthesis && typeof window.speechSynthesis.resume === 'function') {
+        window.speechSynthesis.resume();
+      }
+    }, 10000);
+  }
 })();
 
 if ('serviceWorker' in navigator) {
