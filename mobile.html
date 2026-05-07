@@ -415,27 +415,37 @@ function playNextStreaming() {
   const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
   if (!step) { isPlaying = false; currentlyPlaying = null; setStatus('✅ Done', 'ok'); return; }
 
-  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  // ── MOBILE: use browser's built-in speech engine (no server audio needed) ──
+const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 if (isMobile) {
   isPlaying = true;
   currentlyPlaying = step;
   step.played = true;
-  log('📱 Mobile mode – waiting for audio data');
 
-  function tryPlay() {
-    if (!step.completed) {
-      setTimeout(tryPlay, 100);
-      return;
-    }
+  // Show the text and speak with the browser
+  stepText.textContent = step.meta.text;
+  stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
+  setStatus('🔊 Speaking…');
 
-    const fullBase64 = step.chunks.join('');
-    log('📱 Audio data length: ' + fullBase64.length + ' chars');
-
-    if (!fullBase64) {
-      log('❌ No audio data – skipping');
+  if ('speechSynthesis' in window) {
+    const utterance = new SpeechSynthesisUtterance(step.meta.text);
+    utterance.lang = 'en-US';
+    utterance.rate = 1.0;
+    utterance.onend = () => {
+      log('✅ Browser TTS finished');
       playNextStreaming();
-      return;
-    }
+    };
+    utterance.onerror = () => {
+      log('❌ Browser TTS error');
+      playNextStreaming();
+    };
+    window.speechSynthesis.speak(utterance);
+  } else {
+    log('❌ speechSynthesis not available');
+    playNextStreaming();
+  }
+  return;
+}
 
     // Update UI
     stepText.textContent = step.meta.text;
