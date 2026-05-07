@@ -105,12 +105,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         print(f"❌ TTS error: {tts_err}")
                         audio_b64 = ""
                     await websocket.send_json({
-                        "type": category,
-                        "step": idx,
-                        "total_steps": len(steps),
-                        "text": step.strip(),
-                        "audio_base64": audio_b64
-                    })
+    "type": category,
+    "step": idx,
+    "total_steps": len(steps),
+    "text": step.strip(),
+    "audio_base64": audio_b64
+})
                 print("✅ Response sent")
             else:
                 await websocket.send_json({

@@ -203,9 +203,10 @@ function connectWebSocket() {
     catch { log('Bad JSON from server'); return; }
     if (data.session_id) { sessionId = data.session_id; log('Session: ' + sessionId); return; }
     if (data.info) { setStatus('ℹ️ ' + data.info); log('Server info: ' + data.info); return; }
-         if (data.step && data.audio_base64 !== undefined) {
+             // NON‑STREAMING: server sends full audio in one message
+    if (data.step !== undefined && data.audio_base64 !== undefined) {
       audioQueue.push({
-        type: 'streaming',
+        type: 'step',
         meta: {
           type: data.type || '',
           step: data.step,
@@ -213,11 +214,12 @@ function connectWebSocket() {
           text: data.text,
           audio_base64: data.audio_base64
         },
-        chunks: [],
-        completed: true,
         played: false
       });
-      if (!isPlaying) playNextStreaming();
+      stepText.textContent = data.text;
+      stepLabel.textContent = `Step ${data.step} of ${data.total_steps}`;
+      setStatus('🔊 Buffering…');
+      if (!isPlaying) playNextStep();
       return;
     }
     if (data.audio_chunk) {
@@ -381,33 +383,28 @@ async function decodeAndPlay(base64) {
   });
 }
 
-function playNextStreaming() {
-  const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
+function playNextStep() {
+  const step = audioQueue.find(s => s.type === 'step' && !s.played);
   if (!step) {
     isPlaying = false;
-    currentlyPlaying = null;
     setStatus('✅ Done', 'ok');
     return;
   }
-
   isPlaying = true;
-  currentlyPlaying = step;
   step.played = true;
-
   stepText.textContent  = step.meta.text;
   stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
   setStatus('🔊 Speaking…');
-
-  // If full audio is already present (non-streaming server), play it immediately
   if (step.meta.audio_base64) {
-    decodeAndPlay(step.meta.audio_base64).then(() => playNextStreaming());
-    return;
+    decodeAndPlay(step.meta.audio_base64).then(() => {
+      playNextStep();
+    });
+  } else {
+    playNextStep();  // no audio, skip
   }
-
-  // Otherwise wait for chunks and play via AudioContext
-  waitAndPlayChunks(step);
 }
 
+function playNextStreaming() {
   // ── Desktop: original MediaSource streaming ──
   pendingChunks = [];
   if (mediaSource) { try { URL.revokeObjectURL(window._currentAudio?.src); } catch(_){} }
