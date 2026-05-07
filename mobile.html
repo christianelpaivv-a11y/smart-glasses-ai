@@ -415,39 +415,63 @@ function playNextStreaming() {
   const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
   if (!step) { isPlaying = false; currentlyPlaying = null; setStatus('✅ Done', 'ok'); return; }
 
-  // ── ON MOBILE: skip MediaSource, assemble full audio, play via AudioContext ──
   const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-  if (isMobile) {
-    isPlaying = true;
-    currentlyPlaying = step;
-    step.played = true;
+if (isMobile) {
+  isPlaying = true;
+  currentlyPlaying = step;
+  step.played = true;
+  log('📱 Mobile mode – waiting for audio data');
 
-    // We'll wait for the step to complete (all chunks received), then play
-    function tryPlay() {
-      if (!step.completed) {
-        // Not all chunks yet – check again in 100ms
-        setTimeout(tryPlay, 100);
-        return;
-      }
-      const fullBase64 = step.chunks.join('');
-      if (fullBase64) {
-        // Update UI
-        stepText.textContent = step.meta.text;
-        stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
-        setStatus('🔊 Speaking…');
-        // Use the reliable AudioContext playback
-        decodeAndPlay(fullBase64).then(() => {
-          // Move to next step after playback ends
-          playNextStreaming();
-        });
-      } else {
-        // No audio, go next
-        playNextStreaming();
-      }
+  function tryPlay() {
+    if (!step.completed) {
+      setTimeout(tryPlay, 100);
+      return;
     }
-    tryPlay();
-    return;
+
+    const fullBase64 = step.chunks.join('');
+    log('📱 Audio data length: ' + fullBase64.length + ' chars');
+
+    if (!fullBase64) {
+      log('❌ No audio data – skipping');
+      playNextStreaming();
+      return;
+    }
+
+    // Update UI
+    stepText.textContent = step.meta.text;
+    stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
+    setStatus('🔊 Speaking…');
+
+    // Convert to a blob URL and play immediately
+    const binary = atob(fullBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+
+    const audio = new Audio(url);
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      log('✅ Mobile playback finished');
+      playNextStreaming();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      log('❌ Mobile audio error, trying AudioContext fallback');
+      decodeAndPlay(fullBase64).then(() => playNextStreaming());
+    };
+
+    // The hold‑to‑talk button already called ensureAudioContext(),
+    // so plain HTMLAudioElement.play() almost always works on iOS.
+    audio.play().catch(() => {
+      // If blocked, immediate AudioContext fallback
+      URL.revokeObjectURL(url);
+      decodeAndPlay(fullBase64).then(() => playNextStreaming());
+    });
   }
+  tryPlay();
+  return;
+}
 
   // ── DESKTOP: keep the original MediaSource streaming ─────────────────────
   isPlaying = true;
