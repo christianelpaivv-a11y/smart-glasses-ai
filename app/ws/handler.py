@@ -1,6 +1,6 @@
 from fastapi import WebSocket, WebSocketDisconnect
 from ..core.router import process_question
-from ..services.tts import text_to_speech_base64   # <-- non‑streaming, guaranteed audio
+from ..services.tts import text_to_speech_base64
 from ..services.memory import (
     get_history, add_message, create_session,
     get_user_messages, get_first_user_message
@@ -46,7 +46,7 @@ def handle_meta_question(text: str, session_id: str) -> str:
 
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("🚀 NON‑STREAMING HANDLER CONNECTED")
+    print("🚀 HANDLER CONNECTED")
     session_id = None
     try:
         while True:
@@ -67,25 +67,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if motion and document:
                 add_message(session_id, "user", text)
-                print(f"👤 USER: {text}")
 
+                # Determine answer
                 meta_answer = handle_meta_question(text, session_id)
                 if meta_answer is not None:
                     answer = meta_answer
                     category = "meta"
-                    add_message(session_id, "assistant", answer)
-                    try:
-                        audio_b64 = await text_to_speech_base64(answer)
-                    except Exception as tts_err:
-                        print(f"❌ Meta TTS error: {tts_err}")
-                        audio_b64 = ""
-                    await websocket.send_json({
-                        "type": category,
-                        "step": 1,
-                        "total_steps": 1,
-                        "text": answer,
-                        "audio_base64": audio_b64
-                    })
+                    # For meta answers, there's only one step
+                    steps = [answer]
                 else:
                     try:
                         history = get_history(session_id)
@@ -96,8 +85,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         answer = f"I'm sorry, something went wrong. ({str(ai_err)[:100]})"
                         category = "error"
 
-                    add_message(session_id, "assistant", answer)
-
                     # Split into steps
                     steps = [
                         line.strip()
@@ -107,18 +94,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not steps:
                         steps = [answer]
 
-                    for idx, step in enumerate(steps, 1):
-                        try:
-                            audio_b64 = await text_to_speech_base64(step.strip())
-                        except Exception as tts_err:
-                            audio_b64 = ""
-                        await websocket.send_json({
-                            "type": category,
-                            "step": idx,
-                            "total_steps": len(steps),
-                            "text": step.strip(),
-                            "audio_base64": audio_b64
-                        })
+                # Store assistant message
+                add_message(session_id, "assistant", answer)
+
+                # Send each step with audio
+                for idx, step in enumerate(steps, 1):
+                    try:
+                        audio_b64 = await text_to_speech_base64(step.strip())
+                    except Exception as tts_err:
+                        print(f"❌ TTS error: {tts_err}")
+                        audio_b64 = ""
+                    await websocket.send_json({
+                        "type": category,
+                        "step": idx,
+                        "total_steps": len(steps),
+                        "text": step.strip(),
+                        "audio_base64": audio_b64
+                    })
                 print("✅ Response sent")
             else:
                 await websocket.send_json({
