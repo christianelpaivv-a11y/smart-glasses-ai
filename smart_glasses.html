@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Glasses – Voice Assistant</title>
+  <style>
+    body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #0b0f1a; font-family: 'Segoe UI', system-ui, sans-serif; }
+    .glasses-container { width: 380px; background: #1a1f2f; border-radius: 28px; padding: 24px 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); color: #e0e7ff; }
+    .status { font-size: 0.9rem; color: #7c85a5; margin-bottom: 8px; text-align: center; }
+    .toggles { display: flex; justify-content: space-between; margin-bottom: 16px; }
+    .toggle { width: 48%; padding: 10px; background: #232a3e; border-radius: 12px; text-align: center; cursor: pointer; color: #7c85a5; font-weight: 600; transition: 0.2s; }
+    .toggle.active { background: #3b4b8c; color: white; }
+    .current-step { background: #232a3e; border-radius: 18px; padding: 18px 16px; margin: 16px 0; min-height: 70px; font-size: 1.2rem; line-height: 1.4; color: #ffffff; transition: 0.2s; }
+    .step-counter { font-weight: 600; color: #8b9cf7; font-size: 0.9rem; margin-bottom: 6px; }
+    button { width: 100%; padding: 14px; background: #3b4b8c; color: white; border: none; border-radius: 14px; font-size: 1rem; font-weight: 600; cursor: pointer; margin-bottom: 10px; transition: background 0.2s; }
+    button:hover { background: #4d5fa8; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+<div class="glasses-container">
+  <div class="status" id="status">⚡ Ready · Click a button to begin</div>
+  <div class="toggles">
+    <div class="toggle active" id="motionToggle" onclick="toggleMotion()">🏃 Motion ON</div>
+    <div class="toggle active" id="docToggle" onclick="toggleDoc()">📄 Doc ON</div>
+  </div>
+  <div class="current-step">
+    <div class="step-counter" id="stepLabel">Step 0/0</div>
+    <div id="stepText">Your answer will appear here</div>
+  </div>
+  <button id="micButton" onclick="startListening()">🎤 Speak your question</button>
+  <button onclick="askDefault()">☕ How do I make coffee?</button>
+</div>
+
+<script>
+  let ws;
+  let audioQueue = [];
+  let isPlaying = false;
+  let recognition = null;
+  let sessionId = null;
+
+  let motionDetected = true;
+  let documentInView = true;
+
+  function toggleMotion() {
+    motionDetected = !motionDetected;
+    const el = document.getElementById('motionToggle');
+    el.textContent = motionDetected ? '🏃 Motion ON' : '🏃 Motion OFF';
+    el.classList.toggle('active', motionDetected);
+  }
+  function toggleDoc() {
+    documentInView = !documentInView;
+    const el = document.getElementById('docToggle');
+    el.textContent = documentInView ? '📄 Doc ON' : '📄 Doc OFF';
+    el.classList.toggle('active', documentInView);
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    log('❌ Speech recognition not supported');
+  } else {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onstart = () => log('🎤 Listening...');
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      log('📝 Heard: ' + transcript);
+      sendQuestion(transcript);
+    };
+    recognition.onerror = (event) => log('⚠️ Mic error: ' + event.error);
+    recognition.onend = () => {};
+    log('✅ Speech recognition ready');
+  }
+
+  function log(msg) {
+    console.log('[Glasses]', msg);
+    document.getElementById('status').innerText = msg;
+  }
+
+  function startListening() { if (recognition) recognition.start(); }
+
+  function connectWebSocket() {
+    ws = new WebSocket("ws://localhost:8000/ws");
+    ws.onopen = () => log("🟢 Connected");
+    ws.onclose = () => log("🔴 Disconnected");
+    ws.onerror = () => log("⚠️ Connection error");
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.session_id) { sessionId = data.session_id; return; }
+      if (data.info) { log("ℹ️ " + data.info); return; }
+      // Old-style step message (full audio per step) – used for non-streaming
+      if (data.step && data.audio_base64) {
+        audioQueue.push(data);
+        if (!isPlaying) playNext();
+        return;
+      }
+      // Fallback: if step text but no audio (shouldn't happen)
+      if (data.step) {
+        const fakeData = {...data, audio_base64: ""};
+        audioQueue.push(fakeData);
+        if (!isPlaying) playNext();
+      }
+    };
+  }
+
+  function sendQuestion(question) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { log("⛔ Not connected"); return; }
+    if (!motionDetected || !documentInView) { log("⛔ Sensors not ready"); return; }
+    document.getElementById("micButton").disabled = true;
+    audioQueue = [];
+    document.getElementById("stepText").innerText = "Thinking...";
+    document.getElementById("stepLabel").innerText = "Step 0/0";
+    log("🧠 Asking AI...");
+    ws.send(JSON.stringify({ text: question, motion: motionDetected, document: documentInView, session_id: sessionId }));
+  }
+
+  function askDefault() {
+    document.getElementById("micButton").disabled = true;
+    sendQuestion("How do I make a cup of coffee?");
+  }
+
+  function playNext() {
+    if (audioQueue.length === 0) { isPlaying = false; document.getElementById("micButton").disabled = false; log("✅ All steps complete"); return; }
+    isPlaying = true;
+    const step = audioQueue.shift();
+    document.getElementById("stepText").innerText = step.text;
+    document.getElementById("stepLabel").innerText = `Step ${step.step}/${step.total_steps}`;
+    log(`🔊 Playing step ${step.step}`);
+
+    const binaryStr = atob(step.audio_base64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); playNext(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); playNext(); };
+    audio.play();
+  }
+
+  connectWebSocket();
+</script>
+</body>
+</html>

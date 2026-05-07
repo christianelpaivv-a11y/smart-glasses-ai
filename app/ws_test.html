@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head><title>WS Test</title></head>
+<body>
+  <div id="log"></div>
+  <script>
+    const log = (msg) => document.getElementById('log').innerHTML += msg + '<br>';
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(wsProtocol + '//' + location.hostname + ':8000/ws');
+    ws.onopen = () => {
+      log('OPEN');
+      ws.send(JSON.stringify({text:'hello', motion:true, document:true}));
+    };
+    ws.onmessage = (e) => log('RECEIVED: ' + e.data);
+    ws.onerror = (e) => log('ERROR');
+    ws.onclose = (e) => log('CLOSED');
+  </script>
+</body>
+</html>

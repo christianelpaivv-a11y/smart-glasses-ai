@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <title>Smart Glasses</title>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; width: 100vw; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: env(safe-area-inset-top, 16px) 0 env(safe-area-inset-bottom, 16px); overflow-x: hidden; }
+    .container { width: 100%; max-width: 420px; padding: 20px 16px; color: white; text-align: center; }
+    .status { font-size: 14px; color: #aaa; margin-bottom: 12px; min-height: 20px; transition: color 0.2s; }
+    .status.error { color: #ff6b6b; }
+    .status.ok { color: #6bffb8; }
+    .toggles { display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .toggle { padding: 9px 18px; background: #1a1f2f; border-radius: 12px; font-size: 14px; font-weight: 600; cursor: pointer; color: #7c85a5; user-select: none; -webkit-user-select: none; touch-action: manipulation; transition: background 0.15s, color 0.15s; }
+    .toggle.active { background: #3b4b8c; color: #fff; }
+    #cameraBtn { background: none; border: none; color: white; font-size: 20px; cursor: pointer; padding: 0 4px; display: none; }
+    #cameraBtn:active { color:#8b9cf7; }
+    .hold-btn { width: 100%; height: 130px; background: #1a1f2f; border: 3px solid #3b4b8c; border-radius: 24px; color: white; font-size: 22px; font-weight: bold; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; user-select: none; -webkit-user-select: none; touch-action: manipulation; margin-bottom: 16px; transition: background 0.12s, border-color 0.12s, transform 0.08s; cursor: pointer; }
+    .hold-btn:active, .hold-btn.active { background: #3b4b8c; border-color: #8b9cf7; transform: scale(0.98); }
+    .hold-btn .btn-sub { font-size: 13px; font-weight: 400; color: #8b9cf7; }
+    .text-input-area { display: none; margin-bottom: 16px; animation: fadeIn 0.25s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+    .text-input-row { display: flex; gap: 8px; align-items: center; }
+    .text-input { flex: 1; background: #1a1f2f; border: 2px solid #3b4b8c; border-radius: 12px; color: #fff; font-size: 16px; padding: 12px 14px; outline: none; transition: border-color 0.15s; }
+    .text-input:focus { border-color: #8b9cf7; }
+    .text-input::placeholder { color: #555; }
+    .send-btn { background: #3b4b8c; border: none; border-radius: 12px; color: #fff; font-size: 22px; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; flex-shrink: 0; transition: background 0.12s; }
+    .send-btn:active { background: #5a6dc2; }
+    .answer-box { background: #111; border-radius: 16px; padding: 18px 16px; min-height: 90px; margin-bottom: 12px; }
+    .step-counter { font-size: 13px; color: #8b9cf7; margin-bottom: 8px; }
+    .step-text { font-size: 17px; line-height: 1.5; color: #eee; }
+    .debug-log { background: #111; border-radius: 12px; padding: 8px 10px; max-height: 90px; overflow-y: auto; text-align: left; font-family: monospace; font-size: 11px; color: #888; margin-top: 4px; }
+    .debug-log p { margin: 1px 0; }
+    .hint { font-size: 11px; color: #444; margin-top: 10px; padding: 0 8px; line-height: 1.4; }
+    .camera-container { display: none; margin-bottom: 16px; position: relative; background: #000; border-radius: 16px; overflow: hidden; }
+    .camera-container video { width: 100%; border-radius: 16px; }
+    .capture-btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #3b4b8c; color: white; border: none; padding: 14px 28px; border-radius: 30px; font-size: 18px; font-weight: bold; cursor: pointer; }
+    .close-camera-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 36px; height: 36px; font-size: 16px; cursor: pointer; }
+    .doc-preview { display: none; background: #111; border-radius: 12px; padding: 10px; margin-bottom: 12px; max-height: 120px; overflow-y: auto; font-size: 14px; color: #ccc; text-align: left; }
+    .doc-preview .doc-header { display: flex; justify-content: space-between; align-items: center; }
+    .doc-preview .doc-header span { color: #8b9cf7; font-weight: bold; }
+    .doc-preview .doc-header button { background: none; border: none; color: #aaa; cursor: pointer; font-size: 14px; }
+    .doc-preview .doc-body { margin-top: 6px; white-space: pre-wrap; }
+    .drop-zone { display: none; border: 2px dashed #3b4b8c; border-radius: 16px; padding: 24px 16px; margin-bottom: 16px; cursor: pointer; transition: background 0.15s; color: #7c85a5; }
+    .drop-zone.dragover { background: #1a1f2f; border-color: #8b9cf7; }
+    .drop-zone-content p { margin-top: 8px; font-size: 14px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="status" id="status">⏳ Connecting…</div>
+  <div class="toggles">
+    <div class="toggle active" id="motionToggle">🏃 Motion</div>
+    <div class="toggle active" id="docToggle">📄 Doc</div>
+    <button id="cameraBtn" onclick="openCamera()" aria-label="Open camera"><i class="fas fa-camera"></i></button>
+  </div>
+  <div class="camera-container" id="cameraContainer">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <button class="capture-btn" id="captureBtn"><i class="fas fa-camera"></i> Capture</button>
+    <button class="close-camera-btn" id="closeCameraBtn"><i class="fas fa-times"></i></button>
+  </div>
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-zone-content">
+      <i class="fas fa-cloud-upload-alt" style="font-size: 32px; color: #8b9cf7;"></i>
+      <p>Drop an image here<br>or click to select</p>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" style="display:none;">
+  </div>
+  <div class="doc-preview" id="docPreview">
+    <div class="doc-header">
+      <span>📄 Scanned Document</span>
+      <button onclick="clearDocument()"><i class="fas fa-times"></i> Clear</button>
+    </div>
+    <div class="doc-body" id="docText"></div>
+  </div>
+  <div class="hold-btn" id="holdBtn">
+    <span id="btnIcon">🎤</span>
+    <span id="btnLabel">Hold to Speak</span>
+    <span class="btn-sub" id="btnSub">detecting mic…</span>
+  </div>
+  <div class="text-input-area" id="textInputArea">
+    <div class="text-input-row">
+      <input class="text-input" id="textInput" type="text" inputmode="text" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type your question…" enterkeyhint="send">
+      <button class="send-btn" id="sendBtn" aria-label="Send">➤</button>
+    </div>
+  </div>
+  <div class="answer-box">
+    <div class="step-counter" id="stepLabel">—</div>
+    <div class="step-text" id="stepText">Your answer will appear here.</div>
+  </div>
+  <div class="debug-log" id="debugLog"></div>
+  <div class="hint" id="hint">Use headphones or speaker for voice responses.</div>
+</div>
+
+<script>
+const WS_URL = `ws://${window.location.host}/ws`;
+const RECONNECT_BASE_MS = 1500;
+const RECONNECT_MAX_MS = 30000;
+const RECONNECT_FACTOR = 2;
+
+const statusEl = document.getElementById('status');
+const holdBtn = document.getElementById('holdBtn');
+const btnIcon = document.getElementById('btnIcon');
+const btnLabel = document.getElementById('btnLabel');
+const btnSub = document.getElementById('btnSub');
+const textArea = document.getElementById('textInputArea');
+const textInput = document.getElementById('textInput');
+const sendBtn = document.getElementById('sendBtn');
+const stepLabel = document.getElementById('stepLabel');
+const stepText = document.getElementById('stepText');
+const debugEl = document.getElementById('debugLog');
+const hintEl = document.getElementById('hint');
+const motionTogEl = document.getElementById('motionToggle');
+const docTogEl = document.getElementById('docToggle');
+
+let ws = null;
+let sessionId = null;
+let reconnectDelay = RECONNECT_BASE_MS;
+let reconnectTimer = null;
+let motionDetected = true;
+let documentInView = true;
+
+let inputMode = 'pending';
+let recognition = null;
+let recState = 'idle';
+
+let audioCtx = null;
+let audioQueue = [];
+let isPlaying = false;
+let mediaSource = null;
+let sourceBuffer = null;
+let currentlyPlaying = null;
+let pendingChunks = [];
+
+let documentText = '';
+let stream = null;
+
+function log(msg) {
+  const p = document.createElement('p');
+  p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  debugEl.appendChild(p);
+  debugEl.scrollTop = debugEl.scrollHeight;
+  console.log(msg);
+}
+
+function setStatus(msg, cls = '') {
+  statusEl.textContent = msg;
+  statusEl.className = 'status ' + cls;
+}
+
+function initToggles() {
+  motionTogEl.addEventListener('click', () => {
+    motionDetected = !motionDetected;
+    motionTogEl.textContent = motionDetected ? '🏃 Motion' : '🚶 Motion OFF';
+    motionTogEl.classList.toggle('active', motionDetected);
+  });
+  docTogEl.addEventListener('click', () => {
+    documentInView = !documentInView;
+    docTogEl.textContent = documentInView ? '📄 Doc' : '📄 Doc OFF';
+    docTogEl.classList.toggle('active', documentInView);
+    const cameraBtn = document.getElementById('cameraBtn');
+    const dropZone = document.getElementById('dropZone');
+    if (cameraBtn) cameraBtn.style.display = documentInView ? 'inline-block' : 'none';
+    if (dropZone) dropZone.style.display = documentInView ? 'block' : 'none';
+    if (!documentInView) { stopCamera(); clearDocument(); }
+  });
+}
+
+function connectWebSocket() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  log(`Connecting to ${WS_URL}`);
+  setStatus('⏳ Connecting…');
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    reconnectDelay = RECONNECT_BASE_MS;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    setStatus('🟢 Ready', 'ok');
+    log('WebSocket connected');
+  };
+  ws.onclose = (ev) => {
+    log(`WebSocket closed (code ${ev.code})`);
+    setStatus('🔴 Reconnecting…', 'error');
+    scheduleReconnect();
+  };
+  ws.onerror = () => { log('WebSocket error'); };
+  ws.onmessage = (ev) => {
+    let data;
+    try { data = JSON.parse(ev.data); }
+    catch { log('Bad JSON from server'); return; }
+    if (data.session_id) { sessionId = data.session_id; log('Session: ' + sessionId); return; }
+    if (data.info) { setStatus('ℹ️ ' + data.info); log('Server info: ' + data.info); return; }
+    if (data.step_start) {
+      audioQueue.push({ type: 'streaming', meta: data.step_start, chunks: [], completed: false, played: false });
+      log(`Step ${data.step_start.step}/${data.step_start.total_steps}: ${data.step_start.text.slice(0,40)}`);
+      stepText.textContent = data.step_start.text;
+      stepLabel.textContent = `Step ${data.step_start.step} of ${data.step_start.total_steps}`;
+      setStatus('🔊 Buffering…');
+      if (!isPlaying) playNextStreaming();
+      return;
+    }
+    if (data.audio_chunk) {
+      let current = null;
+      for (let i = audioQueue.length - 1; i >= 0; i--) {
+        if (audioQueue[i].type === 'streaming' && !audioQueue[i].completed) { current = audioQueue[i]; break; }
+      }
+      if (current) {
+        current.chunks.push(data.audio_chunk);
+        if (current === currentlyPlaying) feedChunksToSourceBuffer(current);
+      }
+      return;
+    }
+        if (data.step_end) {
+      let current = null;
+      for (let i = audioQueue.length - 1; i >= 0; i--) {
+        if (audioQueue[i].type === 'streaming' && !audioQueue[i].completed) {
+          current = audioQueue[i];
+          current.completed = true;
+          break;
+        }
+      }
+      if (!current) return;
+
+      // For mobile / fallback: assemble the full audio and play via decodeAndPlay
+      const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      if (isMobile || !mediaSource || mediaSource.readyState !== 'open') {
+        // Build full base64 from all chunks
+        const fullBase64 = current.chunks.join('');
+        if (fullBase64) {
+          // Stop any current MediaSource audio
+          if (window._currentAudio) {
+            window._currentAudio.pause();
+            URL.revokeObjectURL(window._currentAudio.src);
+            window._currentAudio = null;
+          }
+          // Use the already‑working decodeAndPlay function
+          decodeAndPlay(fullBase64).then(() => {
+            // Move to next step after playback ends
+            playNextStreaming();
+          });
+        } else {
+          playNextStreaming();
+        }
+        // Prevent the MediaSource path from running
+        return;
+      }
+
+      // Desktop: keep the existing streaming behaviour (MediaSource)
+      if (current === currentlyPlaying && mediaSource.readyState === 'open') {
+        mediaSource.endOfStream();
+      }
+      return;
+    }
+  };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  log(`Reconnect in ${Math.round(reconnectDelay / 1000)}s`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectDelay = Math.min(reconnectDelay * RECONNECT_FACTOR, RECONNECT_MAX_MS);
+    connectWebSocket();
+  }, reconnectDelay);
+}
+
+function openCamera() {
+  const video = document.getElementById('video');
+  const cameraContainer = document.getElementById('cameraContainer');
+  if (!video || !cameraContainer) return;
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(s => { stream = s; video.srcObject = stream; cameraContainer.style.display = 'block'; log('Camera opened'); })
+    .catch(err => { log('Camera error: ' + err.message); setStatus('⚠️ Cannot access camera', 'error'); });
+}
+
+function stopCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  const cameraContainer = document.getElementById('cameraContainer');
+  if (cameraContainer) cameraContainer.style.display = 'none';
+  const video = document.getElementById('video');
+  if (video) video.srcObject = null;
+}
+
+function clearDocument() {
+  documentText = '';
+  const docTextEl = document.getElementById('docText');
+  if (docTextEl) docTextEl.innerText = '';
+  const docPreview = document.getElementById('docPreview');
+  if (docPreview) docPreview.style.display = 'none';
+  log('Document text cleared');
+}
+
+function runOCR(imageDataUrl) {
+  log('Running OCR on image…');
+  setStatus('🔍 Scanning document…');
+  loadTesseract().then(() => {
+    Tesseract.recognize(imageDataUrl, 'eng', {
+      logger: m => { if (m.status === 'recognizing text') setStatus(`🔍 OCR ${Math.round(m.progress*100)}%`); }
+    }).then(({ data: { text } }) => {
+      if (text.trim()) {
+        documentText = text.trim();
+        document.getElementById('docText').innerText = documentText;
+        document.getElementById('docPreview').style.display = 'block';
+        log('OCR result: ' + documentText.slice(0, 100) + '…');
+        setStatus('📄 Scanned – answering now…');
+        ensureAudioContext();
+        sendQuestion(text.trim());
+      } else {
+        log('No text found in image');
+        setStatus('⚠️ No text detected');
+      }
+      stopCamera();
+    }).catch(err => {
+      log('OCR error: ' + err.message);
+      setStatus('⚠️ OCR failed');
+      stopCamera();
+    });
+  }).catch(err => {
+    log(err.message);
+    setStatus('⚠️ Could not load OCR engine');
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const captureBtn = document.getElementById('captureBtn');
+  const closeBtn = document.getElementById('closeCameraBtn');
+  if (captureBtn) {
+    captureBtn.addEventListener('click', () => {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      if (!video || !canvas) return;
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      runOCR(canvas.toDataURL('image/png'));
+    });
+  }
+  if (closeBtn) closeBtn.addEventListener('click', stopCamera);
+
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  if (dropZone && fileInput) {
+    ['dragenter','dragover','dragleave','drop'].forEach(ev => {
+      dropZone.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); });
+    });
+    dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      dropZone.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (files.length > 0 && files[0].type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (ev) => runOCR(ev.target.result);
+        reader.readAsDataURL(files[0]);
+      }
+    });
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) { const reader = new FileReader(); reader.onload = (ev) => runOCR(ev.target.result); reader.readAsDataURL(file); }
+    });
+  }
+});
+
+function sendQuestion(question) {
+  question = question.trim();
+  if (!question) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) { setStatus('⛔ Not connected – retrying…', 'error'); return; }
+  audioQueue = [];
+  isPlaying = false;
+  stepText.textContent = 'Thinking…';
+  stepLabel.textContent = '—';
+  setStatus('🧠 Thinking…');
+  log('Sending: ' + question);
+  ws.send(JSON.stringify({ text: question, motion: motionDetected, document: documentInView, session_id: sessionId ?? undefined, document_text: (documentInView && documentText) ? documentText : undefined }));
+}
+
+function ensureAudioContext() {
+  if (!audioCtx) { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); log('AudioContext created, state: ' + audioCtx.state); }
+  if (audioCtx.state === 'suspended') { audioCtx.resume().catch(() => {}); }
+}
+
+async function decodeAndPlay(base64) {
+  if (audioCtx && audioCtx.state === 'suspended') try { await audioCtx.resume(); } catch(_){}
+  if (audioCtx) {
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
+      return new Promise(resolve => { const src = audioCtx.createBufferSource(); src.buffer = audioBuffer; src.connect(audioCtx.destination); src.onended = resolve; src.start(0); });
+    } catch(e) { log('AudioContext play failed: ' + e.message + ' — trying HTMLAudio'); }
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'audio/mpeg' });
+  const url = URL.createObjectURL(blob);
+  return new Promise(resolve => {
+    const audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+    audio.play().catch(e => { log('HTMLAudio play blocked: ' + e.message); URL.revokeObjectURL(url); resolve(); });
+  });
+}
+
+function playNextStreaming() {
+  const step = audioQueue.find(s => s.type === 'streaming' && !s.played);
+  if (!step) { isPlaying = false; currentlyPlaying = null; setStatus('✅ Done', 'ok'); return; }
+  isPlaying = true;
+  currentlyPlaying = step;
+  step.played = true;
+  pendingChunks = [];
+  if (mediaSource) { URL.revokeObjectURL(window._currentAudio?.src); }
+  mediaSource = new MediaSource();
+  const audio = new Audio();
+  audio.src = URL.createObjectURL(mediaSource);
+  window._currentAudio = audio;
+  mediaSource.addEventListener('sourceopen', () => {
+    try {
+      sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      sourceBuffer.mode = 'sequence';
+      feedChunksToSourceBuffer(step);
+    } catch(e) { log('MediaSource error: ' + e.message); fallbackPlay(step); }
+  });
+  audio.onended = () => { URL.revokeObjectURL(audio.src); mediaSource = null; sourceBuffer = null; currentlyPlaying = null; playNextStreaming(); };
+  audio.onerror = () => audio.onended();
+  audio.play().catch(e => log('Audio play error: ' + e.message));
+  if (step.completed) {
+    feedChunksToSourceBuffer(step);
+    if (mediaSource.readyState === 'open') mediaSource.endOfStream();
+  }
+}
+
+function feedChunksToSourceBuffer(step) {
+  if (!sourceBuffer || sourceBuffer.updating) {
+    pendingChunks.push(...step.chunks.splice(0));
+    if (!sourceBuffer) return;
+    sourceBuffer.addEventListener('updateend', () => {
+      if (pendingChunks.length > 0) { const c = pendingChunks.shift(); try { sourceBuffer.appendBuffer(base64ToArrayBuffer(c)); } catch(e){} }
+    }, { once: true });
+    return;
+  }
+  while (step.chunks.length > 0) {
+    const chunk = step.chunks.shift();
+    if (!sourceBuffer.updating) {
+      try { sourceBuffer.appendBuffer(base64ToArrayBuffer(chunk)); } catch(e) { fallbackPlay(step); return; }
+    } else { step.chunks.unshift(chunk); sourceBuffer.addEventListener('updateend', () => { if (step.chunks.length > 0) feedChunksToSourceBuffer(step); }, { once: true }); break; }
+  }
+  if (step.completed && step.chunks.length === 0 && mediaSource.readyState === 'open') mediaSource.endOfStream();
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function fallbackPlay(step) {
+  const fullBase64 = step.chunks.join('');
+  if (fullBase64) { decodeAndPlay(fullBase64).then(() => playNextStreaming()); }
+  else playNextStreaming();
+}
+
+function hasSpeechAPI() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+
+function switchToTextMode(reason) {
+  if (inputMode === 'text') return;
+  inputMode = 'text';
+  log('Text mode: ' + reason);
+  btnIcon.textContent = '⌨️';
+  btnLabel.textContent = 'Tap to Type';
+  btnSub.textContent = '';
+  textArea.style.display = 'block';
+  hintEl.textContent = '⌨️ Mic unavailable on HTTP. Use text input below.';
+  if (recognition) { try { recognition.abort(); } catch(_){} recognition = null; }
+}
+
+function switchToMicMode() {
+  inputMode = 'mic';
+  btnIcon.textContent = '🎤';
+  btnLabel.textContent = 'Hold to Speak';
+  btnSub.textContent = 'release to send';
+  textArea.style.display = 'none';
+  hintEl.textContent = 'Use headphones or speaker for voice responses.';
+  log('Mic mode active');
+}
+
+let lastInterim = '';
+let finalSent = false;
+
+function buildRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+  rec.onstart = () => { recState = 'running'; lastInterim = ''; finalSent = false; setStatus('🎤 Listening…'); log('Recognition running'); };
+  rec.onresult = (ev) => {
+    let interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const t = ev.results[i][0].transcript;
+      if (ev.results[i].isFinal) { log('Final transcript: ' + t); setStatus('✅ Got: ' + t.slice(0, 40)); finalSent = true; sendQuestion(t); safeStopRecognition(); return; }
+      interim += t;
+    }
+    if (interim) { lastInterim = interim; setStatus('👂 ' + interim.slice(0, 50)); log('Interim: ' + interim); }
+  };
+  rec.onerror = (ev) => {
+    log('Recognition error: ' + ev.error); recState = 'idle'; holdBtn.classList.remove('active'); btnLabel.textContent = 'Hold to Speak';
+    if (ev.error === 'aborted') return;
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { setStatus('🔇 Mic blocked – switched to text', 'error'); switchToTextMode(ev.error); return; }
+    if (ev.error === 'network') { setStatus('⚠️ Speech network error – switched to text', 'error'); switchToTextMode('network error'); return; }
+    setStatus('⚠️ Mic error: ' + ev.error, 'error');
+  };
+  rec.onend = () => {
+    log('Recognition ended'); recState = 'idle'; holdBtn.classList.remove('active');
+    if (inputMode === 'mic') { btnLabel.textContent = 'Hold to Speak'; btnSub.textContent = 'release to send'; }
+    if (!finalSent && lastInterim.trim()) { log('Firefox fallback: sending "' + lastInterim.trim() + '"'); setStatus('✅ Got: ' + lastInterim.slice(0, 40)); sendQuestion(lastInterim.trim()); }
+    else if (!finalSent && !lastInterim.trim()) { log('Nothing heard'); setStatus('🎤 Nothing heard. Try again.'); }
+    lastInterim = ''; finalSent = false;
+  };
+  return rec;
+}
+
+function safeStartRecognition() {
+  if (recState !== 'idle') return;
+  recState = 'starting';
+  if (!recognition) recognition = buildRecognition();
+  try { recognition.start(); holdBtn.classList.add('active'); btnLabel.textContent = 'Listening…'; btnSub.textContent = 'release to send'; log('recognition.start() called'); }
+  catch(e) { recState = 'idle'; log('recognition.start() threw: ' + e.message); recognition = null; }
+}
+
+function safeStopRecognition() {
+  if (recState === 'idle' || recState === 'stopping') return;
+  recState = 'stopping';
+  if (recognition) { try { recognition.stop(); } catch(e) { log('recognition.stop() threw: ' + e.message); } }
+}
+
+function onButtonDown(ev) {
+  ev.preventDefault();
+  ensureAudioContext();
+  if (inputMode === 'pending') {
+    if (!hasSpeechAPI()) { switchToTextMode('SpeechRecognition API not available'); setTimeout(() => textInput.focus(), 100); return; }
+    switchToMicMode(); safeStartRecognition(); return;
+  }
+  if (inputMode === 'mic') { safeStartRecognition(); return; }
+  if (inputMode === 'text') { textArea.style.display = 'block'; setTimeout(() => textInput.focus(), 50); }
+}
+
+function onButtonUp(ev) { ev.preventDefault(); if (inputMode === 'mic') safeStopRecognition(); }
+
+holdBtn.addEventListener('pointerdown', onButtonDown, { passive: false });
+holdBtn.addEventListener('pointerup', onButtonUp, { passive: false });
+holdBtn.addEventListener('pointerleave', onButtonUp, { passive: false });
+holdBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+
+function submitText() {
+  const q = textInput.value.trim();
+  if (!q) return;
+  textInput.value = '';
+  sendQuestion(q);
+}
+
+sendBtn.addEventListener('click', (e) => { e.preventDefault(); ensureAudioContext(); submitText(); });
+textInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ensureAudioContext(); submitText(); } });
+
+function initPendingUI() {
+  btnIcon.textContent = '🎤';
+  btnLabel.textContent = 'Hold to Speak';
+  btnSub.textContent = 'mic availability will be checked';
+}
+
+(function init() {
+  log('Page loaded · ' + navigator.userAgent.slice(0, 60));
+  initToggles();
+  initPendingUI();
+  connectWebSocket();
+  if (!hasSpeechAPI()) { switchToTextMode('SpeechRecognition API not in this browser'); setStatus('⌨️ Text mode (no Speech API)', 'error'); }
+})();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+}
+</script>
+</body>
+</html>
