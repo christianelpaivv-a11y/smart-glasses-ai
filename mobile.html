@@ -50,6 +50,8 @@
     .drop-zone { display: none; border: 2px dashed #3b4b8c; border-radius: 16px; padding: 24px 16px; margin-bottom: 16px; cursor: pointer; transition: background 0.15s; color: #7c85a5; }
     .drop-zone.dragover { background: #1a1f2f; border-color: #8b9cf7; }
     .drop-zone-content p { margin-top: 8px; font-size: 14px; }
+    .audio-controls { display: none; margin-bottom: 16px; justify-content: center; gap: 8px; }
+    .audio-controls button { background: #1a1f2f; border: none; color: white; padding: 10px; border-radius: 8px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -95,17 +97,16 @@
     <div class="step-counter" id="stepLabel">—</div>
     <div class="step-text" id="stepText">Your answer will appear here.</div>
   </div>
+  <div class="audio-controls" id="audioControls">
+    <button id="prevBtn" onclick="playPrevious()"><i class="fas fa-backward"></i></button>
+    <button id="playPauseBtn" onclick="togglePlayPause()"><i class="fas fa-pause"></i></button>
+    <button id="skipBtn" onclick="playNextStep()"><i class="fas fa-forward"></i></button>
+  </div>
   <div class="debug-log" id="debugLog"></div>
   <div class="hint" id="hint">Use headphones or speaker for voice responses.</div>
 </div>
 
 <script>
-const IS_FIREFOX_IOS = /FxiOS/i.test(navigator.userAgent);
-const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-const IS_MOBILE = (
-  ('ontouchstart' in window || navigator.maxTouchPoints > 0) &&
-  window.innerWidth <= 768
-);
 const WS_URL = `wss://smart-glasses-i1t6.onrender.com/ws`;
 const RECONNECT_BASE_MS = 1500;
 const RECONNECT_MAX_MS = 30000;
@@ -140,13 +141,118 @@ let recState = 'idle';
 let audioCtx = null;
 let audioQueue = [];
 let isPlaying = false;
-let mediaSource = null;
-let sourceBuffer = null;
-let currentlyPlaying = null;
-let pendingChunks = [];
 
 let documentText = '';
 let stream = null;
+
+// --- Audio controls and queue management ---
+let currentAudio = null;
+let currentStepIndex = -1;
+let playedSteps = [];
+let isPaused = false;
+
+function showControls() {
+  document.getElementById('audioControls').style.display = 'flex';
+}
+function hideControls() {
+  document.getElementById('audioControls').style.display = 'none';
+}
+
+function playStep(stepIndex) {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  const step = playedSteps[stepIndex];
+  if (!step || !step.meta.audio_base64) {
+    playNextStep();
+    return;
+  }
+  stepText.textContent = step.meta.text;
+  stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
+  setStatus('🔊 Speaking…');
+  showControls();
+
+  const binary = atob(step.meta.audio_base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'audio/mpeg' });
+  const url = URL.createObjectURL(blob);
+
+  currentAudio = new Audio(url);
+  currentAudio.onended = () => {
+    URL.revokeObjectURL(url);
+    currentAudio = null;
+    if (currentStepIndex < playedSteps.length - 1) {
+      currentStepIndex++;
+      playStep(currentStepIndex);
+    } else {
+      hideControls();
+      setStatus('✅ Done', 'ok');
+      isPlaying = false;
+    }
+  };
+  currentAudio.onerror = () => {
+    URL.revokeObjectURL(url);
+    currentAudio = null;
+    playNextStep();
+  };
+
+  updatePlayPauseButton(false);
+  currentAudio.play().catch(e => log('Audio play error: ' + e.message));
+}
+
+function updatePlayPauseButton(paused) {
+  const btn = document.getElementById('playPauseBtn');
+  if (btn) {
+    btn.innerHTML = paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+  }
+}
+
+function togglePlayPause() {
+  if (!currentAudio) return;
+  if (currentAudio.paused) {
+    currentAudio.play();
+    updatePlayPauseButton(false);
+  } else {
+    currentAudio.pause();
+    updatePlayPauseButton(true);
+  }
+}
+
+// Plays the previous audio step in the sequence if available.
+function playPrevious() {
+  if (currentStepIndex > 0) {
+    currentStepIndex--;
+    playStep(currentStepIndex);
+  }
+}
+
+function playNextStep() {
+  if (playedSteps.length === 0) {
+    while (audioQueue.length > 0) {
+      playedSteps.push(audioQueue.shift());
+    }
+    if (playedSteps.length === 0) {
+      isPlaying = false;
+      setStatus('✅ Done', 'ok');
+      return;
+    }
+    currentStepIndex = 0;
+    playStep(currentStepIndex);
+  } else {
+    if (currentStepIndex < playedSteps.length - 1) {
+      currentStepIndex++;
+      playStep(currentStepIndex);
+    } else {
+      hideControls();
+      setStatus('✅ Done', 'ok');
+      isPlaying = false;
+    }
+  }
+}
+
+// ---------- Rest of your existing functions (unchanged) ----------
 
 function log(msg) {
   const p = document.createElement('p');
@@ -203,10 +309,8 @@ function connectWebSocket() {
     catch { log('Bad JSON from server'); return; }
     if (data.session_id) { sessionId = data.session_id; log('Session: ' + sessionId); return; }
     if (data.info) { setStatus('ℹ️ ' + data.info); log('Server info: ' + data.info); return; }
-             // NON‑STREAMING: server sends full audio in one message
     if (data.step !== undefined && data.audio_base64 !== undefined) {
       audioQueue.push({
-        type: 'step',
         meta: {
           type: data.type || '',
           step: data.step,
@@ -220,27 +324,6 @@ function connectWebSocket() {
       stepLabel.textContent = `Step ${data.step} of ${data.total_steps}`;
       setStatus('🔊 Buffering…');
       if (!isPlaying) playNextStep();
-      return;
-    }
-    if (data.audio_chunk) {
-      let current = null;
-      for (let i = audioQueue.length - 1; i >= 0; i--) {
-        if (audioQueue[i].type === 'streaming' && !audioQueue[i].completed) { current = audioQueue[i]; break; }
-      }
-      if (current) {
-        current.chunks.push(data.audio_chunk);
-        if (current === currentlyPlaying) feedChunksToSourceBuffer(current);
-      }
-      return;
-    }
-    if (data.step_end) {
-      let current = null;
-      for (let i = audioQueue.length - 1; i >= 0; i--) {
-        if (audioQueue[i].type === 'streaming' && !audioQueue[i].completed) { current = audioQueue[i]; current.completed = true; break; }
-      }
-      if (current && current === currentlyPlaying && mediaSource && mediaSource.readyState === 'open') {
-        mediaSource.endOfStream();
-      }
       return;
     }
   };
@@ -359,139 +442,6 @@ function ensureAudioContext() {
   if (audioCtx.state === 'suspended') { audioCtx.resume().catch(() => {}); }
 }
 
-async function decodeAndPlay(base64) {
-  if (audioCtx && audioCtx.state === 'suspended') try { await audioCtx.resume(); } catch(_){}
-  if (audioCtx) {
-    try {
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
-      return new Promise(resolve => { const src = audioCtx.createBufferSource(); src.buffer = audioBuffer; src.connect(audioCtx.destination); src.onended = resolve; src.start(0); });
-    } catch(e) { log('AudioContext play failed: ' + e.message + ' — trying HTMLAudio'); }
-  }
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  const blob = new Blob([bytes], { type: 'audio/mpeg' });
-  const url = URL.createObjectURL(blob);
-  return new Promise(resolve => {
-    const audio = new Audio(url);
-    audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-    audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-    audio.play().catch(e => { log('HTMLAudio play blocked: ' + e.message); URL.revokeObjectURL(url); resolve(); });
-  });
-}
-
-function playNextStep() {
-  const step = audioQueue.find(s => s.type === 'step' && !s.played);
-  if (!step) {
-    isPlaying = false;
-    setStatus('✅ Done', 'ok');
-    return;
-  }
-  isPlaying = true;
-  step.played = true;
-  stepText.textContent  = step.meta.text;
-  stepLabel.textContent = `Step ${step.meta.step} of ${step.meta.total_steps}`;
-  setStatus('🔊 Speaking…');
-  if (step.meta.audio_base64) {
-    decodeAndPlay(step.meta.audio_base64).then(() => {
-      playNextStep();
-    });
-  } else {
-    playNextStep();  // no audio, skip
-  }
-}
-
-function playNextStreaming() {
-  // ── Desktop: original MediaSource streaming ──
-  pendingChunks = [];
-  if (mediaSource) { try { URL.revokeObjectURL(window._currentAudio?.src); } catch(_){} }
-  mediaSource = new MediaSource();
-  const audio = new Audio();
-  audio.src = URL.createObjectURL(mediaSource);
-  window._currentAudio = audio;
-
-  mediaSource.addEventListener('sourceopen', () => {
-    try {
-      sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
-      sourceBuffer.mode = 'sequence';
-      feedChunksToSourceBuffer(step);
-    } catch(e) {
-      log('MediaSource error: ' + e.message);
-      fallbackPlay(step);
-    }
-  });
-
-  audio.onended = () => {
-    URL.revokeObjectURL(audio.src);
-    mediaSource = null; sourceBuffer = null; currentlyPlaying = null;
-    playNextStreaming();
-  };
-  audio.onerror = () => audio.onended();
-  audio.play().catch(e => log('Audio play error: ' + e.message));
-
-  if (step.completed) {
-    feedChunksToSourceBuffer(step);
-    if (mediaSource && mediaSource.readyState === 'open') mediaSource.endOfStream();
-  }
-}
-
-// Waits until step_end arrives with all chunks, then plays via AudioContext
-function waitAndPlayChunks(step) {
-  if (step.completed) {
-    const fullBase64 = step.chunks.join('');
-    if (fullBase64) {
-      log('Playing via AudioContext: ' + fullBase64.length + ' chars');
-      decodeAndPlay(fullBase64).then(() => {
-        log('✅ AudioContext playback done');
-        playNextStreaming();
-      }).catch(e => {
-        log('AudioContext failed: ' + e.message);
-        playNextStreaming();
-      });
-    } else {
-      log('No audio chunks received — skipping');
-      playNextStreaming();
-    }
-    return;
-  }
-  // Chunks still arriving — poll every 100ms
-  setTimeout(() => waitAndPlayChunks(step), 100);
-}
-
-function feedChunksToSourceBuffer(step) {
-  if (!sourceBuffer || sourceBuffer.updating) {
-    pendingChunks.push(...step.chunks.splice(0));
-    if (!sourceBuffer) return;
-    sourceBuffer.addEventListener('updateend', () => {
-      if (pendingChunks.length > 0) { const c = pendingChunks.shift(); try { sourceBuffer.appendBuffer(base64ToArrayBuffer(c)); } catch(e){} }
-    }, { once: true });
-    return;
-  }
-  while (step.chunks.length > 0) {
-    const chunk = step.chunks.shift();
-    if (!sourceBuffer.updating) {
-      try { sourceBuffer.appendBuffer(base64ToArrayBuffer(chunk)); } catch(e) { fallbackPlay(step); return; }
-    } else { step.chunks.unshift(chunk); sourceBuffer.addEventListener('updateend', () => { if (step.chunks.length > 0) feedChunksToSourceBuffer(step); }, { once: true }); break; }
-  }
-  if (step.completed && step.chunks.length === 0 && mediaSource.readyState === 'open') mediaSource.endOfStream();
-}
-
-function base64ToArrayBuffer(base64) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
-}
-
-function fallbackPlay(step) {
-  const fullBase64 = step.chunks.join('');
-  if (fullBase64) { decodeAndPlay(fullBase64).then(() => playNextStreaming()); }
-  else playNextStreaming();
-}
-
 function hasSpeechAPI() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
 
 function switchToTextMode(reason) {
@@ -567,14 +517,6 @@ function safeStopRecognition() {
 function onButtonDown(ev) {
   ev.preventDefault();
   ensureAudioContext();
-  // Unlock speechSynthesis on iOS during the user gesture
-  if (!window._speechUnlocked && 'speechSynthesis' in window) {
-    window._speechUnlocked = true;
-    const u = new SpeechSynthesisUtterance('');
-    u.volume = 0;
-    window.speechSynthesis.speak(u);
-  }
-
   if (inputMode === 'pending') {
     if (!hasSpeechAPI()) { switchToTextMode('SpeechRecognition API not available'); setTimeout(() => textInput.focus(), 100); return; }
     switchToMicMode(); safeStartRecognition(); return;
@@ -612,11 +554,6 @@ function initPendingUI() {
   initPendingUI();
   connectWebSocket();
   if (!hasSpeechAPI()) { switchToTextMode('SpeechRecognition API not in this browser'); setStatus('⌨️ Text mode (no Speech API)', 'error'); }
-
-  // Keep speech synthesis alive on iOS
-  setInterval(() => {
-    if ('speechSynthesis' in window) window.speechSynthesis.resume();
-  }, 10000);
 })();
 
 if ('serviceWorker' in navigator) {
